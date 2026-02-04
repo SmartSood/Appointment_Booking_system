@@ -18,6 +18,7 @@ A full-stack **agentic AI** app for doctor appointments and reports. Patients bo
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
 - [API reference](#api-reference)
+- [Environment variables (full list)](#environment-variables-full-list)
 
 ---
 
@@ -340,7 +341,7 @@ Without these, the app still works: bookings go to the DB; email and Slack are s
 5. In Slack, in the channel you use (e.g. #dobble-reports), run: `/invite @Dobble`.
 6. Restart the backend.
 
-**If you get `missing_scope` / `chat:write:bot`:** Add **chat:write** under Bot Token Scopes, then **Reinstall** (or **Add to Slack** again), copy the **new** token into `SLACK_BOT_TOKEN`, and restart the backend.
+**If you get `missing_scope` / `chat:write:bot`:** Add **chat:write** under Bot Token Scopes, click **Manage Distribution** → **Add to Slack** (or open the Sharable URL), choose your workspace, click **Allow**. Then copy the **new** Bot User OAuth Token from **OAuth & Permissions** into `SLACK_BOT_TOKEN` in `backend/.env`, and restart the backend.
 
 ---
 
@@ -350,7 +351,7 @@ Without these, the app still works: bookings go to the DB; email and Slack are s
   Use `./db_push.sh` from `backend/` so only `backend/.env` is used for Prisma.
 
 - **Slack: `missing_scope`, `chat:write:bot`**  
-  Add **chat:write** under Bot Token Scopes, reinstall the app, copy the new Bot User OAuth Token into `SLACK_BOT_TOKEN`, restart backend. See **ENV_REFERENCE.md** for step-by-step.
+  Add **chat:write** under Bot Token Scopes, then **Manage Distribution** → **Add to Slack** → choose workspace → **Allow**. Copy the new Bot User OAuth Token from **OAuth & Permissions** into `SLACK_BOT_TOKEN` in `backend/.env`, restart backend.
 
 - **"You have no upcoming appointments" (Patient)**  
   Ensure you’re logged in with the same email used to book. Log out and log in again so the session has your email; then ask "What are my upcoming appointments?" again.
@@ -383,7 +384,8 @@ Dobble/
 │   ├── seed_db.py, run.py
 │   └── scripts/get_google_refresh_token.py
 ├── components/, lib/
-├── ENV_REFERENCE.md        # All env variables
+├── env.example             # Copy to .env (root)
+├── backend/env.example     # Copy to backend/.env
 └── README.md
 ```
 
@@ -421,4 +423,56 @@ Used by the Gemini agent via MCP:
 
 ---
 
-For a full list of environment variables, see **ENV_REFERENCE.md**.
+## Environment variables (full list)
+
+### Root `.env` (project root)
+
+| Variable | Required | Example | Purpose |
+|----------|----------|---------|---------|
+| **NEXTAUTH_URL** | Yes | `http://localhost:3000` | NextAuth app URL. |
+| **NEXTAUTH_SECRET** | Yes | (output of `openssl rand -base64 32`) | Secret for NextAuth JWT. |
+| **DATABASE_URL** | Yes | `postgresql://user:pass@localhost:5432/dobble` | PostgreSQL connection (same as backend). |
+| **BACKEND_URL** | No | `http://localhost:8000` | FastAPI backend URL. |
+
+### Backend `.env` (`backend/.env`)
+
+**Required**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| **DATABASE_URL** | `postgresql://user:pass@localhost:5432/dobble` | PostgreSQL for Prisma. |
+| **JWT_SECRET** | (output of `openssl rand -base64 32`) | JWT signing secret. |
+| **VERTEXAI_PROJECT** | `my-gcp-project-id` | GCP project (Vertex AI enabled). Auth: `gcloud auth application-default login` |
+| **VERTEXAI_LOCATION** | `us-central1` | Vertex AI region. |
+
+**Optional – Google Calendar**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| **GOOGLE_CREDENTIALS_FILE** | `path/to/service-account.json` | Service account (option A). |
+| **GOOGLE_OAUTH_CLIENT_ID** | `xxx.apps.googleusercontent.com` | OAuth client ID (option B). |
+| **GOOGLE_OAUTH_CLIENT_SECRET** | (from GCP) | OAuth client secret. |
+| **GOOGLE_OAUTH_REFRESH_TOKEN** | (from `scripts/get_google_refresh_token.py`) | OAuth refresh token. |
+| **GOOGLE_CALENDAR_ID** | `primary` | Calendar to use (default `primary`). |
+
+**Optional – SendGrid**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| **SENDGRID_API_KEY** | `SG.xxx` | SendGrid API key. |
+| **SENDGRID_FROM_EMAIL** | `noreply@yourdomain.com` | Sender (must be verified). |
+
+**Optional – Slack**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| **SLACK_BOT_TOKEN** | `xoxb-xxx` | Bot token (**chat:write** scope required). |
+| **SLACK_CHANNEL_ID** | `C01234ABCD` | Channel ID for doctor reports. |
+
+**Optional – other**
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| **FRONTEND_ORIGIN** | `http://localhost:3000` | CORS origin. |
+| **MCP_SERVER_URL** | `http://localhost:8000/mcp/sse` | MCP SSE URL. |
+| **JWT_EXPIRE_MINUTES** | `10080` | JWT lifetime (minutes). |
