@@ -86,7 +86,8 @@ async def get_doctor_availability_impl(doctor_name: str, date_str: str) -> list[
             }
         )
         if not slots:
-            out = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"]
+            # Default full working day (9 AM–5 PM, hourly) for doctors with no availability_slots
+            out = [f"{h:02d}:00" for h in range(9, 17)]
         else:
             out = []
             for s in slots:
