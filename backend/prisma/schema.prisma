@@ -1,0 +1,65 @@
+// Single schema: Doctor + Patient (auth + agent), Booking, AvailabilitySlot.
+// Auth and all data via FastAPI only; Next.js has no Prisma.
+
+generator client_py {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Doctor {
+  id             Int       @id @default(autoincrement())
+  name           String
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  specialization String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  bookings       Booking[]
+  availabilitySlots AvailabilitySlot[]
+
+  @@map("doctors")
+}
+
+model Patient {
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  bookings     Booking[]
+
+  @@map("patients")
+}
+
+model Booking {
+  id               Int      @id @default(autoincrement())
+  doctorId         Int      @map("doctor_id")
+  patientId        Int      @map("patient_id")
+  scheduledAt      DateTime @map("scheduled_at")
+  status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
+  notes            String?
+  condition        String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  calendarEventId  String?  @map("calendar_event_id")
+  doctor           Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient          Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("appointments")
+}
+
+model AvailabilitySlot {
+  id           Int     @id @default(autoincrement())
+  doctorId     Int     @map("doctor_id")
+  dayOfWeek    Int     @map("day_of_week") // 0=Monday, 6=Sunday
+  startTime    String  @map("start_time") // "09:00"
+  endTime      String  @map("end_time")   // "17:00"
+  isAvailable  Boolean @default(true) @map("is_available")
+  doctor       Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@map("availability_slots")
+}

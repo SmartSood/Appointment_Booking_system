@@ -1,0 +1,32 @@
+# FastAPI & server
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Database - Prisma Python
+prisma
+
+# LLM agent (Gemini) via Vertex AI
+google-genai>=1.0.0
+google-cloud-aiplatform>=1.38.0
+
+# Google & email (optional)
+google-auth==2.29.0
+google-auth-oauthlib>=1.0.0,<2.0
+google-api-python-client==2.149.0
+
+# Email
+sendgrid==6.11.0
+
+# Slack (optional)
+slack-sdk==3.33.2
+
+# Auth (password hash + JWT)
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# Env
+pydantic-settings==2.6.1
+
+# MCP (optional - install separately if needed: pip install fastmcp)
+fastmcp
+mcp
