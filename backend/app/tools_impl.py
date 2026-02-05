@@ -1,12 +1,53 @@
 """Shared tool implementations used by MCP server and LLM agent. Uses Prisma Python."""
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app.db import get_prisma
 from app.services import calendar, email, notification
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_future_date(day: date) -> date:
+    """If the parsed date is in the past, use same month/day in current year (e.g. 2024-02-07 -> 2026-02-07)."""
+    today = datetime.utcnow().date()
+    if day < today:
+        try:
+            return day.replace(year=today.year)
+        except ValueError:
+            # e.g. Feb 29 in non-leap year
+            return day
+    return day
+
+
+def _normalize_doctor_search(name: str) -> list[str]:
+    """Return search variants for doctor name so we match 'Dr. Vandna', 'Vandna', 'Vandna Sood', etc."""
+    s = (name or "").strip()
+    if not s:
+        return []
+    out = [s]
+    # Without leading "Dr." / "Dr " so "Dr. Vandna" matches "Vandna Sood"
+    without_dr = re.sub(r"^\s*Dr\.?\s*", "", s, flags=re.IGNORECASE).strip()
+    if without_dr and without_dr not in out:
+        out.append(without_dr)
+    # First word only (e.g. "Vandna" from "Dr. Vandna" or "Vandna Sood")
+    first = (without_dr or s).split()[0] if (without_dr or s) else None
+    if first and first not in out:
+        out.append(first)
+    return out
+
+
+async def _find_doctor_by_name(doctor_name: str):
+    """Find doctor by name; tries exact contains then variants (without Dr., first name). Returns doctor or None."""
+    prisma = get_prisma()
+    for term in _normalize_doctor_search(doctor_name):
+        doctor = await prisma.doctor.find_first(
+            where={"name": {"contains": term, "mode": "insensitive"}}
+        )
+        if doctor:
+            return doctor
+    return None
 
 
 def _parse_slot_time(slot_time: str) -> datetime.time | None:
@@ -68,14 +109,13 @@ async def get_doctor_availability_impl(doctor_name: str, date_str: str) -> list[
             day = datetime.utcnow().date()
         else:
             day = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+        day = _resolve_future_date(day)
     except (ValueError, TypeError):
         return []
     day_of_week = day.weekday()  # 0=Monday
     try:
         prisma = get_prisma()
-        doctor = await prisma.doctor.find_first(
-            where={"name": {"contains": doctor_name, "mode": "insensitive"}}
-        )
+        doctor = await _find_doctor_by_name(doctor_name)
         if not doctor:
             return []
         slots = await prisma.availabilityslot.find_many(
@@ -183,6 +223,7 @@ async def book_appointment_impl(
             day = datetime.utcnow().date()
         else:
             day = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+        day = _resolve_future_date(day)
         dt = _parse_slot_time(slot_time)
         if dt is None:
             return {"success": False, "message": "Invalid time format. Use HH:MM (e.g. 14:00), 2pm, or 2:00 PM."}
@@ -190,9 +231,7 @@ async def book_appointment_impl(
     except (ValueError, TypeError):
         return {"success": False, "message": "Invalid date or time format."}
     prisma = get_prisma()
-    doctor = await prisma.doctor.find_first(
-        where={"name": {"contains": doctor_name, "mode": "insensitive"}}
-    )
+    doctor = await _find_doctor_by_name(doctor_name)
     if not doctor:
         return {"success": False, "message": f"Doctor '{doctor_name}' not found."}
     available = await get_doctor_availability_impl(doctor_name, date_str)
@@ -220,6 +259,15 @@ async def book_appointment_impl(
             doctor.name, patient_name, patient_email, scheduled_at, end_at,
             summary=f"Appointment: {patient_name} with {doctor.name}",
         )
+        calendar_ok = (
+            calendar_event_id is not None
+            and not (isinstance(calendar_event_id, str) and calendar_event_id.startswith("stub_"))
+        )
+        if not calendar_ok:
+            logger.warning(
+                "Booking saved but event not added to Google Calendar (not configured or API failed). "
+                "Check backend/.env: GOOGLE_CREDENTIALS_FILE or GOOGLE_OAUTH_* and backend logs."
+            )
         appointment = await prisma.booking.create(
             data={
                 "doctorId": doctor.id,
@@ -237,9 +285,12 @@ async def book_appointment_impl(
             f"Appointment confirmed with {doctor.name}",
             body,
         )
+        msg = f"Booked {scheduled_at.isoformat()} with {doctor.name}."
+        if not calendar_ok:
+            msg += " (Google Calendar: not configured or sync failed; check backend logs and GOOGLE_* in backend/.env)"
         return {
             "success": True,
-            "message": f"Booked {scheduled_at.isoformat()} with {doctor.name}.",
+            "message": msg,
             "appointment_id": appointment.id,
         }
     except Exception as e:
@@ -260,9 +311,7 @@ async def get_doctor_stats_impl(
 ) -> dict:
     """Get stats for doctor: visits_yesterday, appointments_today, appointments_tomorrow, patients_with_condition."""
     prisma = get_prisma()
-    doctor = await prisma.doctor.find_first(
-        where={"name": {"contains": doctor_name, "mode": "insensitive"}}
-    )
+    doctor = await _find_doctor_by_name(doctor_name)
     if not doctor:
         return {"error": f"Doctor '{doctor_name}' not found."}
     today = datetime.utcnow().date()

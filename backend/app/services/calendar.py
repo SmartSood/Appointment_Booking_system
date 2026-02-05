@@ -8,8 +8,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Lazy-built service (sync Google API)
+# Cached only for service account (OAuth we build each time to refresh token)
 _calendar_service = None
+_using_oauth = False
 
 
 _CALENDAR_SCOPES = [
@@ -20,9 +21,7 @@ _CALENDAR_SCOPES = [
 
 def _get_calendar_service():
     """Build Google Calendar API service. Uses (1) service account JSON or (2) OAuth refresh token. Returns None if not configured."""
-    global _calendar_service
-    if _calendar_service is not None:
-        return _calendar_service
+    global _calendar_service, _using_oauth
     creds = None
     # (1) Service account (requires JSON key file)
     path = (settings.google_credentials_file or "").strip()
@@ -30,6 +29,7 @@ def _get_calendar_service():
         try:
             from google.oauth2 import service_account
             creds = service_account.Credentials.from_service_account_file(path, scopes=_CALENDAR_SCOPES)
+            _using_oauth = False
         except Exception as e:
             logger.warning("Failed to load service account: %s", e)
     # (2) OAuth 2.0 (no key file – use when org blocks service account keys)
@@ -49,12 +49,30 @@ def _get_calendar_service():
                     client_secret=csec,
                     scopes=_CALENDAR_SCOPES,
                 )
-                creds.refresh(Request())
+                req = Request()
+                creds.refresh(req)
+                _using_oauth = True
             except Exception as e:
-                logger.warning("Failed to build OAuth credentials: %s", e)
+                logger.warning("Failed to build OAuth credentials (check GOOGLE_OAUTH_* and refresh token): %s", e)
                 creds = None
+        else:
+            if not path:
+                logger.debug("Google Calendar not configured: set GOOGLE_CREDENTIALS_FILE or GOOGLE_OAUTH_* in backend/.env")
     if creds is None:
         return None
+    # For OAuth, refresh if expired and don't cache service (access token expires ~1h)
+    if _using_oauth:
+        try:
+            from google.auth.transport.requests import Request
+            if getattr(creds, "expired", True) or not getattr(creds, "valid", True):
+                creds.refresh(Request())
+            from googleapiclient.discovery import build
+            return build("calendar", "v3", credentials=creds, cache_discovery=False)
+        except Exception as e:
+            logger.warning("Calendar OAuth refresh or build failed: %s", e)
+            return None
+    if _calendar_service is not None:
+        return _calendar_service
     try:
         from googleapiclient.discovery import build
         _calendar_service = build("calendar", "v3", credentials=creds, cache_discovery=False)
@@ -75,6 +93,10 @@ async def create_calendar_event(
     """Create event in Google Calendar. Returns event_id or stub id if not configured."""
     service = _get_calendar_service()
     if not service:
+        logger.info(
+            "Google Calendar not configured or auth failed: set GOOGLE_CREDENTIALS_FILE or "
+            "GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN in backend/.env"
+        )
         return f"stub_{doctor_name}_{start.isoformat()}"
 
     end_dt = end or start.replace(hour=start.hour + 1, minute=0, second=0, microsecond=0)
